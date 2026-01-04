@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from fastapi import FastAPI, Response
 from app.config import load_settings
 from app.db import init_db, fetch_sample
@@ -14,20 +15,23 @@ logger.setLevel(logging.INFO)
 
 fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
 
-file_handler = logging.FileHandler(settings.log_path)
-file_handler.setFormatter(fmt)
-logger.addHandler(file_handler)
+# Avoid duplicate handlers on reload
+if not logger.handlers:
+    file_handler = logging.FileHandler(settings.log_path)
+    file_handler.setFormatter(fmt)
+    logger.addHandler(file_handler)
 
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(fmt)
-logger.addHandler(console_handler)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(fmt)
+    logger.addHandler(console_handler)
 
-app = FastAPI(title="app-support-lab", version="0.3.0")
+app = FastAPI(title="app-support-lab", version="0.4.0")
 
 # Simple in-memory metrics (good enough for a lab)
 METRICS = {
     "requests_total": 0,
     "errors_total": 0,
+    "slow_responses_total": 0,
 }
 
 @app.on_event("startup")
@@ -51,6 +55,13 @@ def api_data():
         logger.error(f"ENV={settings.env} | /api/data | 503 | Simulated DB down")
         return Response(content="Database unavailable (simulated)", status_code=503)
 
+    # Incident simulation: Slow response
+    if settings.simulate_slow:
+        METRICS["slow_responses_total"] += 1
+        delay_s = 3
+        time.sleep(delay_s)
+        logger.warning(f"ENV={settings.env} | /api/data | 200 | Simulated slow response ({delay_s}s)")
+
     ok, rows, err = fetch_sample(settings.db_path)
     if not ok:
         METRICS["errors_total"] += 1
@@ -72,5 +83,8 @@ def metrics():
         "# HELP app_errors_total Total application errors\n"
         "# TYPE app_errors_total counter\n"
         f"app_errors_total {METRICS['errors_total']}\n"
+        "# HELP app_slow_responses_total Total simulated slow responses\n"
+        "# TYPE app_slow_responses_total counter\n"
+        f"app_slow_responses_total {METRICS['slow_responses_total']}\n"
     )
     return Response(content=content, media_type="text/plain")
